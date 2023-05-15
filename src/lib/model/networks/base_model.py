@@ -111,7 +111,7 @@ class BaseModel(nn.Module):
           ind = self.opt.pc_feat_channels['pc_dep']
           z['pc_hm'] = pc_hm[:,ind,:,:].unsqueeze(1)
 
-          ## Run the second stage heads  
+          ## Run the second stage heads
           sec_feats = [feats[s], pc_hm]
           sec_feats = torch.cat(sec_feats, 1)
           for head in self.secondary_heads:

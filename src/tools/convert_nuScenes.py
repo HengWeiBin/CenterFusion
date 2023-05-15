@@ -146,11 +146,11 @@ def main():
           frame_ids[sensor_name] += 1
 
            # get radar pointclouds
-          all_radar_pcs = RadarPointCloud(np.zeros((18, 0)))
-          for radar_channel in RADARS_FOR_CAMERA[sensor_name]:
-            radar_pcs, _ = RadarPointCloud.from_file_multisweep(nusc, 
-              sample, radar_channel, sensor_name, NUM_SWEEPS)
-            all_radar_pcs.points = np.hstack((all_radar_pcs.points, radar_pcs.points))
+          # all_radar_pcs = RadarPointCloud(np.zeros((18, 0)))
+          # for radar_channel in RADARS_FOR_CAMERA[sensor_name]:
+          #   radar_pcs, _ = RadarPointCloud.from_file_multisweep(nusc, 
+          #     sample, radar_channel, sensor_name, NUM_SWEEPS)
+          #   all_radar_pcs.points = np.hstack((all_radar_pcs.points, radar_pcs.points))
           
           # image information in COCO format
           image_info = {'id': num_images,
@@ -168,7 +168,7 @@ def main():
                         'pose_record_rot': pose_record['rotation'],
                         'cs_record_trans': cs_record['translation'],
                         'cs_record_rot': cs_record['rotation'],
-                        'radar_pc': all_radar_pcs.points.tolist(), 
+                        # 'radar_pc': all_radar_pcs.points.tolist(), 
                         'camera_intrinsic': camera_intrinsic.tolist()}
           ret['images'].append(image_info)
 
