@@ -13,6 +13,10 @@ import numpy as np
 import cv2
 import random
 
+from numba import njit, jit
+import warnings
+warnings.filterwarnings('ignore')
+
 def flip(img):
   return img[:, :, ::-1].copy()  
 
@@ -208,36 +212,107 @@ def draw_msra_gaussian(heatmap, center, sigma):
     g[g_y[0]:g_y[1], g_x[0]:g_x[1]])
   return heatmap
 
-def grayscale(image):
-    return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+# @jit
+# def grayscale(image):
+#     return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-def lighting_(data_rng, image, alphastd, eigval, eigvec):
-    alpha = data_rng.normal(scale=alphastd, size=(3, ))
-    image += np.dot(eigvec, eigval * alpha)
+# def lighting_(data_rng, image, alphastd, eigval, eigvec):
+#     alpha = data_rng.normal(scale=alphastd, size=(3, ))
+#     image += np.dot(eigvec, eigval * alpha)
+# @njit
+# def lighting_(image, alphastd, eigval, eigvec):
+#     # alpha = np.random.normal(scale=alphastd, size=(3, ))
 
-def blend_(alpha, image1, image2):
-    image1 *= alpha
-    image2 *= (1 - alpha)
-    image1 += image2
+#     alpha = np.empty(3, dtype=np.float32)
+#     for i in range(3):
+#         alpha[i] = np.random.normal()
+#     alpha *= alphastd
 
-def saturation_(data_rng, image, gs, gs_mean, var):
-    alpha = 1. + data_rng.uniform(low=-var, high=var)
-    blend_(alpha, image, gs[:, :, None])
+#     image += np.dot(eigvec, eigval * alpha)
 
-def brightness_(data_rng, image, gs, gs_mean, var):
-    alpha = 1. + data_rng.uniform(low=-var, high=var)
-    image *= alpha
+# @njit
+# def blend_(alpha, image1, image2):
+#     image1 *= alpha
+#     image2 *= (1 - alpha)
+#     image1 += image2
 
-def contrast_(data_rng, image, gs, gs_mean, var):
-    alpha = 1. + data_rng.uniform(low=-var, high=var)
-    blend_(alpha, image, gs_mean)
+# def saturation_(data_rng, image, gs, gs_mean, var):
+#     alpha = 1. + data_rng.uniform(low=-var, high=var)
+#     blend_(alpha, image, gs[:, :, None])
+# @njit
+# def saturation_(image, gs, gs_mean, var):
+#     alpha = 1. + np.random.uniform(low=-var, high=var)
+#     blend_(alpha, image, gs[:, :, None])
 
-def color_aug(data_rng, image, eig_val, eig_vec):
-    functions = [brightness_, contrast_, saturation_]
-    random.shuffle(functions)
+# def brightness_(data_rng, image, gs, gs_mean, var):
+#     alpha = 1. + data_rng.uniform(low=-var, high=var)
+#     image *= alpha
+# @njit
+# def brightness_(image, gs, gs_mean, var):
+#     alpha = 1. + np.random.uniform(low=-var, high=var)
+#     image *= alpha
 
-    gs = grayscale(image)
+# def contrast_(data_rng, image, gs, gs_mean, var):
+#     alpha = 1. + data_rng.uniform(low=-var, high=var)
+#     blend_(alpha, image, gs_mean)
+# @njit
+# def contrast_(image, gs, gs_mean, var):
+#     alpha = 1. + np.random.uniform(low=-var, high=var)
+#     blend_(alpha, image, gs_mean)
+
+# def color_aug(data_rng, image, eig_val, eig_vec):
+#     functions = [brightness_, contrast_, saturation_]
+#     random.shuffle(functions)
+
+#     gs = grayscale(image)
+#     gs_mean = gs.mean()
+#     for func in functions:
+#         func(data_rng, image, gs, gs_mean, 0.4)
+#     lighting_(data_rng, image, 0.1, eig_val, eig_vec)
+@njit() # wayne memory check
+def color_aug(image, eig_val, eig_vec):
+    # grayscale
+    grayscale_factor = np.array([0.114, 0.587, 0.299])
+    gs = np.zeros((image.shape[0], image.shape[1]), dtype=np.float32)
+    for i in range(image.shape[0]):
+      for j in range(image.shape[1]):
+        gs[i, j] = (image[i, j, :] * grayscale_factor).mean()
+
+    augment_order = []
+    while len(augment_order) != 3:
+      random_int = random.randint(0, 2)
+      if random_int not in augment_order:
+        augment_order.append(random_int)
+
+    #==============================================================
+    #     Augmentation start
+    #==============================================================
     gs_mean = gs.mean()
-    for f in functions:
-        f(data_rng, image, gs, gs_mean, 0.4)
-    lighting_(data_rng, image, 0.1, eig_val, eig_vec)
+    var = 0.4
+    for order in augment_order:
+      if order == 0:
+        # brightness_
+        alpha = 1. + np.random.uniform(low=-var, high=var)
+        image *= alpha
+
+      elif order == 1:
+        # contrast_
+        alpha = 1. + np.random.uniform(low=-var, high=var)
+        image *= alpha
+        gs_mean *= (1 - alpha)
+        image += gs_mean
+
+      elif order == 2:
+        # saturation_
+        alpha = 1. + np.random.uniform(low=-var, high=var)
+        image *= alpha
+        gs[:, :, None] *= (1 - alpha)
+        image += gs[:, :, None]
+
+    # lighting_
+    alphastd = 0.1
+    alpha = np.empty(3, dtype=np.float32)
+    for i in range(3):
+        alpha[i] = np.random.normal()
+    alpha *= alphastd
+    image += np.dot(eig_vec, eig_val * alpha)

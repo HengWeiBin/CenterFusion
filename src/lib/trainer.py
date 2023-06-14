@@ -198,8 +198,8 @@ class Trainer(object):
             pbar_msg += f'{mem_used:.2f}    '
             pbar.set_description(pbar_msg)
             # memory check
-            # with open('memory_used.txt', 'a') as f:
-            #     f.write(f'{mem_used}' + '\n')
+            with open('memory_used.txt', 'a') as f:
+                f.write(f'{mem_used}' + '\n')
 
             if opt.debug > 0:
                 self.debug(batch, output, iter_id, dataset=data_loader.dataset)
@@ -229,7 +229,7 @@ class Trainer(object):
                 img_id = batch['meta']['img_id'].numpy().astype(np.int32)[0]
                 results[img_id] = result
 
-            del output, loss, loss_stats
+        #     del output, loss, loss_stats
 
         ret = {k: v.avg for k, v in avg_loss_stats.items()}
         ret['time'] = pbar.format_dict['elapsed']

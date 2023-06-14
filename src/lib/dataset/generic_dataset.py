@@ -27,6 +27,7 @@ from nuscenes.utils.geometry_utils import view_points
 from utils.ddd_utils import compute_box_3d, project_to_image, draw_box_3d
 from utils.ddd_utils import comput_corners_3d, alpha2rot_y, get_pc_hm
 
+from sys import getsizeof # wayne memory check
 
 def get_dist_thresh(calib, ct, dim, alpha):
     rotation_y = alpha2rot_y(alpha, ct[0], calib[0, 2], calib[0, 0])
@@ -124,35 +125,43 @@ class GenericDataset(data.Dataset):
             self.img_dir = img_dir
 
     def __getitem__(self, index):
+        # t1 = time.time()
         img, anns, img_info, img_path = self._load_image_anns(
-            self.images[index], self.coco, self.img_dir)
+            self.images[index], self.img_dir) # self.images[index], self.coco, self.img_dir) # wayne memory check
+        # t2 = time.time()
         height, width = img.shape[0], img.shape[1]
 
         # sort annotations based on depth form far to near
-        new_anns = sorted(anns, key=lambda k: k['depth'], reverse=True)
+        # new_anns = sorted(anns, key=lambda k: k['depth'], reverse=True) #wayne useless
 
         # Get center and scale from image
-        c = np.array([img.shape[1] / 2., img.shape[0] / 2.], dtype=np.float32)
-        s = max(img.shape[0], img.shape[1]) * 1.0 if not self.opt.not_max_crop \
-            else np.array([img.shape[1], img.shape[0]], np.float32)
+        c = np.array([width / 2., height / 2.], dtype=np.float32)
+        s = max(height, width) * 1.0 if not self.opt.not_max_crop \
+            else np.array([width, height], np.float32)
         aug_s, rot, flipped = 1, 0, 0
 
         # data augmentation for training set
         if 'train' in self.split:
+            # t6 = time.time()
             c, aug_s, rot = self._get_aug_param(c, s, width, height)
+            # t7 = time.time()
             s = s * aug_s
             if np.random.random() < self.opt.flip:
                 flipped = 1
                 img = img[:, ::-1, :]
                 anns = self._flip_anns(anns, width)
+            # t8 = time.time()
 
         trans_input = get_affine_transform(
             c, s, rot, [self.opt.input_w, self.opt.input_h])
+        # t9 = time.time()
         trans_output = get_affine_transform(
             c, s, rot, [self.opt.output_w, self.opt.output_h])
+        # t10 = time.time()
         inp = self._get_input(img, trans_input)
         ret = {'image': inp}
         gt_det = {'bboxes': [], 'scores': [], 'clses': [], 'cts': []}
+        # t3 = time.time()
 
         #  load point cloud data
         if self.opt.pointcloud:
@@ -162,9 +171,11 @@ class GenericDataset(data.Dataset):
                         'pc_3d': pc_3d,
                         'pc_N': pc_N,
                         'pc_dep': pc_dep})
+        # t4 = time.time()
 
         pre_cts, track_ids = None, None
         if self.opt.tracking:
+            print("warning!!!!!!!!!!!! tracking available")
             pre_image, pre_anns, frame_dist, pre_img_info = self._load_pre_data(
                 img_info['video_id'], img_info['frame_id'],
                 img_info['sensor_id'] if 'sensor_id' in img_info else 1)
@@ -199,7 +210,7 @@ class GenericDataset(data.Dataset):
                 ret['pre_pc_hm'] = pre_pc_hm
 
         # init samples
-        self._init_ret(ret, gt_det)
+        self._init_ret(ret, gt_det) #下次修 val batchsize問題請看這個
         calib = self._get_calib(img_info, width, height)
 
         # get velocity transformation matrix
@@ -223,6 +234,18 @@ class GenericDataset(data.Dataset):
             self._add_instance(
                 ret, gt_det, k, cls_id, bbox, bbox_amodal, ann, trans_output, aug_s,
                 calib, pre_cts, track_ids)
+        # t5 = time.time()
+
+        # with open('time_used_log.txt', 'a+') as f:
+        #     f.write(f'load image: {(t2 - t1) * 1000:.0f}ms'+'\n')
+        #     f.write(f'data augmentation: {(t3 - t2) * 1000:.0f}ms'+'\n')
+        #     f.write(f'    - get aug param: {(t7 - t6) * 1000:.0f}ms'+'\n')
+        #     f.write(f'    - flip: {(t8 - t7) * 1000:.0f}ms'+'\n')
+        #     f.write(f'    - affine input: {(t9 - t8) * 1000:.0f}ms'+'\n')
+        #     f.write(f'    - affine output: {(t10 - t9) * 1000:.0f}ms'+'\n')
+        #     f.write(f'    - get input: {(t3 - t10) * 1000:.0f}ms'+'\n')
+        #     f.write(f'load point cloud: {(t4 - t3) * 1000:.0f}ms'+'\n')
+        #     f.write(f'processing return: {(t5 - t4) * 1000:.0f}ms'+'\n')
         # print("len(gt_det['bboxes'])", len(gt_det['bboxes'])) # wayne collate check
 
         if self.opt.debug > 0 or self.enable_meta:
@@ -232,8 +255,17 @@ class GenericDataset(data.Dataset):
                     'img_width': img_info['width'], 'img_height': img_info['height'],
                     'flipped': flipped, 'velocity_mat': velocity_mat}
             ret['meta'] = meta
+            #del velocity_mat # wayne memory check
         ret['calib'] = calib
         
+        
+        # ======================================================
+        #                   wayne memory check
+        # ======================================================
+        # del img, anns, img_info, img_path
+        # del c, s # center and scale
+        # del trans_input, trans_output, inp
+        # del gt_det, calib
         return ret
 
     def get_default_calib(self, width, height):
@@ -242,13 +274,14 @@ class GenericDataset(data.Dataset):
                           [0, 0, 1, 0]])
         return calib
 
-    def _load_image_anns(self, img_id, coco, img_dir):
-        img_info = coco.loadImgs(ids=[img_id])[0]
+    def _load_image_anns(self, img_id, img_dir): # def _load_image_anns(self, img_id, coco, img_dir): wayne memory check
+        img_info = self.coco.loadImgs(ids=[img_id])[0]
         file_name = img_info['file_name']
         img_path = os.path.join(img_dir, file_name)
-        ann_ids = coco.getAnnIds(imgIds=[img_id])
-        anns = copy.deepcopy(coco.loadAnns(ids=ann_ids))
+        ann_ids = self.coco.getAnnIds(imgIds=[img_id])
+        anns = self.coco.loadAnns(ids=ann_ids) # copy.deepcopy(coco.loadAnns(ids=ann_ids)) wayne memory check
         img = cv2.imread(img_path)
+        # del file_name, ann_ids # wayne memory check
         return img, anns, img_info, img_path
 
     def _load_pre_data(self, video_id, frame_id, sensor_id=1):
@@ -274,7 +307,7 @@ class GenericDataset(data.Dataset):
         img_id, pre_frame_id = img_ids[rand_id]
         frame_dist = abs(frame_id - pre_frame_id)
         img, anns, img_info, _ = self._load_image_anns(
-            img_id, self.coco, self.img_dir)
+            img_id, self.img_dir) # img_id, self.coco, self.img_dir) #  wayne memory check
         return img, anns, frame_dist, img_info
 
     def _get_pre_dets(self, anns, trans_input, trans_output):
@@ -343,6 +376,8 @@ class GenericDataset(data.Dataset):
             h_border = self._get_border(128, height)
             c[0] = np.random.randint(low=w_border, high=width - w_border)
             c[1] = np.random.randint(low=h_border, high=height - h_border)
+
+            # del w_border, h_border # wayne memory check
         else:
             sf = self.opt.scale
             cf = self.opt.shift
@@ -352,6 +387,8 @@ class GenericDataset(data.Dataset):
             c[0] += s * np.clip(temp, -2*cf, 2*cf)
             c[1] += s * np.clip(np.random.randn()*cf, -2*cf, 2*cf)
             aug_s = np.clip(np.random.randn()*sf + 1, 1 - sf, 1 + sf)
+
+            # del temp # wayne memory check
 
         if np.random.random() < self.opt.aug_rot:
             rf = self.opt.rotate
@@ -372,9 +409,10 @@ class GenericDataset(data.Dataset):
                     self.num_joints, 3)
                 keypoints[:, 0] = width - keypoints[:, 0] - 1
                 for e in self.flip_idx:
-                    keypoints[e[0]], keypoints[e[1]] = \
-                        keypoints[e[1]].copy(), keypoints[e[0]].copy()
+                    keypoints[e[0]], keypoints[e[1]] = keypoints[e[1]], keypoints[e[0]] # wayne memory check
                 anns[k]['keypoints'] = keypoints.reshape(-1).tolist()
+
+                # del keypoints # wayne memory check
 
             if 'rot' in self.opt.heads and 'alpha' in anns[k]:
                 anns[k]['alpha'] = np.pi - anns[k]['alpha'] if anns[k]['alpha'] > 0 \
@@ -385,8 +423,9 @@ class GenericDataset(data.Dataset):
                     anns[k]['amodel_center'][0] - 1
 
             if self.opt.velocity and 'velocity' in anns[k]:
-                # anns[k]['velocity'] = [-10000, -10000, -10000]
                 anns[k]['velocity'][0] *= -1
+
+            # del bbox # wayne memory cehck
 
         return anns
 
@@ -448,6 +487,25 @@ class GenericDataset(data.Dataset):
         pc_z[:, :n_points] = pc_2d[:, :n_points]
         pc_3dz = np.zeros((pc_3d.shape[0], self.opt.max_pc))
         pc_3dz[:, :n_points] = pc_3d[:, :n_points]
+        # ======================================================
+        #                   wayne memory check
+        # ======================================================
+        # pc_z_size = getsizeof(pc_z)
+        # pc_N_size = getsizeof(pc_N)
+        # pc_dep_size = getsizeof(pc_dep)
+        # pc_3dz_size = getsizeof(pc_3dz)
+        # print(f'pc_z: {pc_z_size} bytes,\
+        #  pc_N: {pc_N_size} bytes,\
+        #   pc_dep: {pc_dep_size} bytes,\
+        #    pc_3dz: {pc_3dz_size} bytes,\
+        #     total: {sum([pc_z_size, pc_N_size, pc_dep_size, pc_3dz_size])} bytes') 
+        # RadarPcClassSize = getsizeof(all_radar_pcs)
+        # NuscenesClassSize = getsizeof(self.nusc)
+        # print(f'RadarPcClassSize: {RadarPcClassSize} bytes', end='')
+        # print(f' NuscenesClassSize: {NuscenesClassSize} bytes')
+        # del radar_pc, mask
+        # ======================================================
+        # ======================================================
 
         return pc_z, pc_N, pc_dep, pc_3dz
 
@@ -554,9 +612,11 @@ class GenericDataset(data.Dataset):
             pillar_wh[0, i] = bbox[2] - bbox[0]
             pillar_wh[1, i] = bbox[3] - bbox[1]
 
+            # del box_3d, box_2d, box_2d_t, m, bbox # wayne memory check
+
         ## DEBUG #################################################################
         if self.opt.debug:
-            img_2d = copy.deepcopy(img)
+            img_2d = img.copy() #copy.deepcopy(img) wayne memory check
             # img_3d = copy.deepcopy(img)
             img_2d_inp = cv2.warpAffine(img, inp_trans,
                                         (self.opt.input_w, self.opt.input_h),
@@ -641,6 +701,7 @@ class GenericDataset(data.Dataset):
                         .format(self.img_ind), img_3d)
             self.img_ind += 1
         ## DEBUG #################################################################
+        # del boxes_2d, pillar_dim, v, ry # wayne memory check
         return pillar_wh
 
     def _flip_pc(self, pc_2d, width):
@@ -676,15 +737,24 @@ class GenericDataset(data.Dataset):
     # Augment, resize and normalize the image
 
     def _get_input(self, img, trans_input):
+        # t1 = time.time()
         inp = cv2.warpAffine(img, trans_input,
                              (self.opt.input_w, self.opt.input_h),
                              flags=cv2.INTER_LINEAR)
+        # t2 = time.time()
 
         inp = (inp.astype(np.float32) / 255.)
         if 'train' in self.split and not self.opt.no_color_aug:
-            color_aug(self._data_rng, inp, self._eig_val, self._eig_vec)
+            # t3 = time.time()
+            # color_aug(self._data_rng, inp, self._eig_val, self._eig_vec)
+            color_aug(inp, self._eig_val, self._eig_vec)
+            # t4 = time.time()
         inp = (inp - self.mean) / self.std
         inp = inp.transpose(2, 0, 1)
+        # t5 = time.time()
+        # print('\n' + f'warpAffine: {(t2 - t1) * 1000:.1f}ms')
+        # print(f'color_aug: {(t4 - t3) * 1000:.1f}ms')
+        # print(f'other: {(t5 - t4) * 1000:.1f}ms')
         return inp
 
     def _init_ret(self, ret, gt_det):
@@ -769,7 +839,7 @@ class GenericDataset(data.Dataset):
         return bbox
 
     def _get_bbox_output(self, bbox, trans_output, height, width):
-        bbox = self._coco_box_to_bbox(bbox).copy()
+        bbox = self._coco_box_to_bbox(bbox)
 
         rect = np.array([[bbox[0], bbox[1]], [bbox[0], bbox[3]],
                         [bbox[2], bbox[3]], [bbox[2], bbox[1]]], dtype=np.float32)
@@ -778,10 +848,11 @@ class GenericDataset(data.Dataset):
         bbox[:2] = rect[:, 0].min(), rect[:, 1].min()
         bbox[2:] = rect[:, 0].max(), rect[:, 1].max()
 
-        bbox_amodal = copy.deepcopy(bbox)
+        bbox_amodal = bbox.copy() # copy.deepcopy(bbox) wayne memory check
         bbox[[0, 2]] = np.clip(bbox[[0, 2]], 0, self.opt.output_w - 1)
         bbox[[1, 3]] = np.clip(bbox[[1, 3]], 0, self.opt.output_h - 1)
-        h, w = bbox[3] - bbox[1], bbox[2] - bbox[0]
+        #h, w = bbox[3] - bbox[1], bbox[2] - bbox[0]  wayne memory check
+        # del rect #wayne memory check
         return bbox, bbox_amodal
 
     def _add_instance(

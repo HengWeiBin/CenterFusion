@@ -10,7 +10,7 @@ def main():
     plt.title('System Memory')
     plt.xlabel('Steps')
     plt.ylabel('Memory Used (GB)')
-    plt.ylim([40, 55])
+    # plt.ylim([35, 58])
     plt.savefig('memory_used.png')
 
 if __name__ == '__main__':

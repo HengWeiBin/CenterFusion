@@ -28,9 +28,11 @@ def get_optimizer(opt, model):
     return optimizer
 
 def main(opt):
-    # memory check
-    # if os.path.exists('memory_used.txt'):
-    #     os.remove('memory_used.txt')
+    # wayne memory check
+    if os.path.exists('memory_used.txt'):
+        os.remove('memory_used.txt')
+    if os.path.exists('time_used_log.txt'):
+        os.remove('time_used_log.txt')
 
     torch.manual_seed(opt.seed)
     torch.backends.cudnn.benchmark = not opt.not_cuda_benchmark and not opt.eval
